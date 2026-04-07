@@ -137,9 +137,9 @@ impl RedditClient {
         };
         let resp = self.get(&endpoint).await?;
         let posts = parse_posts(&resp)?;
-        let next = resp["data"]["after"].as_str().map(|s| {
-            s.strip_prefix("t3_").unwrap_or(s).to_string()
-        });
+        let next = resp["data"]["after"]
+            .as_str()
+            .map(|s| s.strip_prefix("t3_").unwrap_or(s).to_string());
         Ok((posts, next))
     }
 
@@ -211,8 +211,11 @@ impl RedditClient {
     }
 
     pub async fn vote(&self, fullname: &str, direction: i8) -> Result<()> {
-        self.post_form("/api/vote", &[("id", fullname), ("dir", &direction.to_string())])
-            .await?;
+        self.post_form(
+            "/api/vote",
+            &[("id", fullname), ("dir", &direction.to_string())],
+        )
+        .await?;
         Ok(())
     }
 
@@ -227,23 +230,21 @@ impl RedditClient {
     }
 
     pub async fn inbox(&self, limit: u32) -> Result<Vec<InboxItem>> {
-        let resp = self
-            .get(&format!("/message/inbox?limit={limit}"))
-            .await?;
+        let resp = self.get(&format!("/message/inbox?limit={limit}")).await?;
         let items = resp["data"]["children"]
             .as_array()
             .context("Invalid inbox response")?;
 
-        Ok(items.iter().filter_map(|item| parse_inbox_item(&item["data"])).collect())
+        Ok(items
+            .iter()
+            .filter_map(|item| parse_inbox_item(&item["data"]))
+            .collect())
     }
 
     pub async fn saved_posts(&self, limit: u32) -> Result<Vec<Post>> {
         let config = crate::config::load_config()?;
         let resp = self
-            .get(&format!(
-                "/user/{}/saved?limit={limit}",
-                config.username
-            ))
+            .get(&format!("/user/{}/saved?limit={limit}", config.username))
             .await?;
         let children = resp["data"]["children"]
             .as_array()
@@ -270,7 +271,9 @@ impl RedditClient {
 
     pub async fn user_posts(&self, username: &str, limit: u32) -> Result<Vec<Post>> {
         let resp = self
-            .get(&format!("/user/{username}/submitted?limit={limit}&sort=new"))
+            .get(&format!(
+                "/user/{username}/submitted?limit={limit}&sort=new"
+            ))
             .await?;
         parse_posts(&resp)
     }
@@ -281,8 +284,11 @@ impl RedditClient {
     }
 
     pub async fn reply(&self, parent_fullname: &str, text: &str) -> Result<()> {
-        self.post_form("/api/comment", &[("thing_id", parent_fullname), ("text", text)])
-            .await?;
+        self.post_form(
+            "/api/comment",
+            &[("thing_id", parent_fullname), ("text", text)],
+        )
+        .await?;
         Ok(())
     }
 }

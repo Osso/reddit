@@ -215,7 +215,12 @@ async fn main() -> Result<()> {
 
 async fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
     match cmd {
-        Commands::Feed { sort, limit, subreddit, after } => {
+        Commands::Feed {
+            sort,
+            limit,
+            subreddit,
+            after,
+        } => {
             show_feed(reddit, sort, limit, subreddit, after).await?;
         }
         Commands::Post { id } => display::format_post_detail(&reddit.post(&id).await?),
@@ -226,16 +231,34 @@ async fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()>
         Commands::Sub { name } => {
             display::format_subreddit_info(&reddit.subreddit_info(&name).await?);
         }
-        Commands::Search { query, subreddit, sort, limit } => {
-            let posts = reddit.search(&query, subreddit.as_deref(), sort.as_str(), limit).await?;
+        Commands::Search {
+            query,
+            subreddit,
+            sort,
+            limit,
+        } => {
+            let posts = reddit
+                .search(&query, subreddit.as_deref(), sort.as_str(), limit)
+                .await?;
             display::format_post_list(&posts, 0);
         }
         Commands::Vote { id, direction } => vote_on_thing(reddit, id, direction).await?,
-        Commands::Save { id } => { reddit.save(&to_fullname(&id, "t3")).await?; eprintln!("Saved."); }
-        Commands::Unsave { id } => { reddit.unsave(&to_fullname(&id, "t3")).await?; eprintln!("Unsaved."); }
-        Commands::Saved { limit } => display::format_post_list(&reddit.saved_posts(limit).await?, 0),
+        Commands::Save { id } => {
+            reddit.save(&to_fullname(&id, "t3")).await?;
+            eprintln!("Saved.");
+        }
+        Commands::Unsave { id } => {
+            reddit.unsave(&to_fullname(&id, "t3")).await?;
+            eprintln!("Unsaved.");
+        }
+        Commands::Saved { limit } => {
+            display::format_post_list(&reddit.saved_posts(limit).await?, 0)
+        }
         Commands::Inbox { limit } => show_inbox(reddit, limit).await?,
-        Commands::ReadAll => { reddit.mark_read().await?; eprintln!("All messages marked as read."); }
+        Commands::ReadAll => {
+            reddit.mark_read().await?;
+            eprintln!("All messages marked as read.");
+        }
         Commands::User { name, limit } => show_user(reddit, &name, limit).await?,
         Commands::Reply { id, text } => {
             reddit.reply(&to_fullname(&id, "t3"), &text).await?;

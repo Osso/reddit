@@ -1,12 +1,9 @@
-use anyhow::{Context, Result};
 use crate::config::Config;
+use anyhow::{Context, Result};
 
 const USER_AGENT: &str = "reddit-cli/0.1 by Ossoleil";
 
-pub async fn password_auth(
-    client: &reqwest::Client,
-    config: &Config,
-) -> Result<(String, String)> {
+pub async fn password_auth(client: &reqwest::Client, config: &Config) -> Result<(String, String)> {
     let params = [
         ("grant_type", "password"),
         ("username", config.username.as_str()),
