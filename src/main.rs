@@ -214,12 +214,22 @@ async fn main() -> Result<()> {
 
 async fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
     match cmd {
-        Commands::Feed { sort, limit, subreddit, after } => show_feed(reddit, sort, limit, subreddit, after).await?,
+        Commands::Feed {
+            sort,
+            limit,
+            subreddit,
+            after,
+        } => show_feed(reddit, sort, limit, subreddit, after).await?,
         Commands::Post { id } => fetch_post(reddit, &id).await?,
         Commands::Comments { id, limit } => fetch_comments(reddit, &id, limit).await?,
         Commands::Subs => show_subscriptions(reddit).await?,
         Commands::Sub { name } => show_subreddit(reddit, &name).await?,
-        Commands::Search { query, subreddit, sort, limit } => search_posts(reddit, &query, subreddit, sort, limit).await?,
+        Commands::Search {
+            query,
+            subreddit,
+            sort,
+            limit,
+        } => search_posts(reddit, &query, subreddit, sort, limit).await?,
         Commands::Vote { id, direction } => vote_on_thing(reddit, id, direction).await?,
         Commands::Save { id } => save_post(reddit, &id).await?,
         Commands::Unsave { id } => unsave_post(reddit, &id).await?,
