@@ -1,5 +1,4 @@
 mod auth;
-#[allow(dead_code)]
 mod client;
 mod config;
 mod display;
@@ -215,57 +214,80 @@ async fn main() -> Result<()> {
 
 async fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
     match cmd {
-        Commands::Feed {
-            sort,
-            limit,
-            subreddit,
-            after,
-        } => {
-            show_feed(reddit, sort, limit, subreddit, after).await?;
-        }
-        Commands::Post { id } => display::format_post_detail(&reddit.post(&id).await?),
-        Commands::Comments { id, limit } => {
-            display::format_comments(&reddit.comments(&id, limit).await?);
-        }
+        Commands::Feed { sort, limit, subreddit, after } => show_feed(reddit, sort, limit, subreddit, after).await?,
+        Commands::Post { id } => fetch_post(reddit, &id).await?,
+        Commands::Comments { id, limit } => fetch_comments(reddit, &id, limit).await?,
         Commands::Subs => show_subscriptions(reddit).await?,
-        Commands::Sub { name } => {
-            display::format_subreddit_info(&reddit.subreddit_info(&name).await?);
-        }
-        Commands::Search {
-            query,
-            subreddit,
-            sort,
-            limit,
-        } => {
-            let posts = reddit
-                .search(&query, subreddit.as_deref(), sort.as_str(), limit)
-                .await?;
-            display::format_post_list(&posts, 0);
-        }
+        Commands::Sub { name } => show_subreddit(reddit, &name).await?,
+        Commands::Search { query, subreddit, sort, limit } => search_posts(reddit, &query, subreddit, sort, limit).await?,
         Commands::Vote { id, direction } => vote_on_thing(reddit, id, direction).await?,
-        Commands::Save { id } => {
-            reddit.save(&to_fullname(&id, "t3")).await?;
-            eprintln!("Saved.");
-        }
-        Commands::Unsave { id } => {
-            reddit.unsave(&to_fullname(&id, "t3")).await?;
-            eprintln!("Unsaved.");
-        }
-        Commands::Saved { limit } => {
-            display::format_post_list(&reddit.saved_posts(limit).await?, 0)
-        }
+        Commands::Save { id } => save_post(reddit, &id).await?,
+        Commands::Unsave { id } => unsave_post(reddit, &id).await?,
+        Commands::Saved { limit } => show_saved(reddit, limit).await?,
         Commands::Inbox { limit } => show_inbox(reddit, limit).await?,
-        Commands::ReadAll => {
-            reddit.mark_read().await?;
-            eprintln!("All messages marked as read.");
-        }
+        Commands::ReadAll => mark_all_read(reddit).await?,
         Commands::User { name, limit } => show_user(reddit, &name, limit).await?,
-        Commands::Reply { id, text } => {
-            reddit.reply(&to_fullname(&id, "t3"), &text).await?;
-            eprintln!("Reply posted.");
-        }
+        Commands::Reply { id, text } => post_reply(reddit, &id, &text).await?,
         Commands::Config { .. } | Commands::Login => unreachable!(),
     }
+    Ok(())
+}
+
+async fn fetch_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    display::format_post_detail(&reddit.post(id).await?);
+    Ok(())
+}
+
+async fn fetch_comments(reddit: &client::RedditClient, id: &str, limit: u32) -> Result<()> {
+    display::format_comments(&reddit.comments(id, limit).await?);
+    Ok(())
+}
+
+async fn show_subreddit(reddit: &client::RedditClient, name: &str) -> Result<()> {
+    display::format_subreddit_info(&reddit.subreddit_info(name).await?);
+    Ok(())
+}
+
+async fn search_posts(
+    reddit: &client::RedditClient,
+    query: &str,
+    subreddit: Option<String>,
+    sort: SearchSort,
+    limit: u32,
+) -> Result<()> {
+    let posts = reddit
+        .search(query, subreddit.as_deref(), sort.as_str(), limit)
+        .await?;
+    display::format_post_list(&posts, 0);
+    Ok(())
+}
+
+async fn save_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    reddit.save(&to_fullname(id, "t3")).await?;
+    eprintln!("Saved.");
+    Ok(())
+}
+
+async fn unsave_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    reddit.unsave(&to_fullname(id, "t3")).await?;
+    eprintln!("Unsaved.");
+    Ok(())
+}
+
+async fn show_saved(reddit: &client::RedditClient, limit: u32) -> Result<()> {
+    display::format_post_list(&reddit.saved_posts(limit).await?, 0);
+    Ok(())
+}
+
+async fn mark_all_read(reddit: &client::RedditClient) -> Result<()> {
+    reddit.mark_read().await?;
+    eprintln!("All messages marked as read.");
+    Ok(())
+}
+
+async fn post_reply(reddit: &client::RedditClient, id: &str, text: &str) -> Result<()> {
+    reddit.reply(&to_fullname(id, "t3"), text).await?;
+    eprintln!("Reply posted.");
     Ok(())
 }
 
