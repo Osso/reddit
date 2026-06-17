@@ -1,10 +1,9 @@
+use crate::browser;
 use anyhow::{Context, Result};
-
-const USER_AGENT: &str = "reddit-cli/0.1 by Ossoleil";
+use serde_json::Value;
 
 pub struct RedditClient {
-    client: reqwest::Client,
-    token: String,
+    session: browser::Session,
 }
 
 #[derive(Debug, Clone)]
@@ -68,59 +67,21 @@ pub struct UserInfo {
 }
 
 impl RedditClient {
-    pub async fn new() -> Result<Self> {
-        let config = crate::config::load_config()?;
-        let client = reqwest::Client::new();
-        let token = crate::auth::authenticate(&client, &config).await?;
-        Ok(Self { client, token })
+    pub fn new() -> Result<Self> {
+        browser::ensure_reddit_tab()?;
+        let session = browser::login_session()?;
+        Ok(Self { session })
     }
 
-    async fn get(&self, endpoint: &str) -> Result<serde_json::Value> {
-        let url = format!("https://oauth.reddit.com{endpoint}");
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.token)
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await
-            .with_context(|| format!("GET {endpoint}"))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("API error {status}: {body}");
-        }
-
-        resp.json().await.context("Failed to parse response")
+    fn get(&self, endpoint: &str) -> Result<Value> {
+        browser::get(endpoint)
     }
 
-    async fn post_form(
-        &self,
-        endpoint: &str,
-        params: &[(&str, &str)],
-    ) -> Result<serde_json::Value> {
-        let url = format!("https://oauth.reddit.com{endpoint}");
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header("User-Agent", USER_AGENT)
-            .form(params)
-            .send()
-            .await
-            .with_context(|| format!("POST {endpoint}"))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("API error {status}: {body}");
-        }
-
-        resp.json().await.context("Failed to parse response")
+    fn post_form(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Value> {
+        browser::post_form(endpoint, params, &self.session.modhash)
     }
 
-    pub async fn feed(
+    pub fn feed(
         &self,
         sort: &str,
         limit: u32,
@@ -135,7 +96,7 @@ impl RedditClient {
             Some(a) => format!("{base}?limit={limit}&after=t3_{a}"),
             None => format!("{base}?limit={limit}"),
         };
-        let resp = self.get(&endpoint).await?;
+        let resp = self.get(&endpoint)?;
         let posts = parse_posts(&resp)?;
         let next = resp["data"]["after"]
             .as_str()
@@ -143,16 +104,14 @@ impl RedditClient {
         Ok((posts, next))
     }
 
-    pub async fn post(&self, id: &str) -> Result<Post> {
-        let resp = self.get(&format!("/comments/{id}?limit=0")).await?;
+    pub fn post(&self, id: &str) -> Result<Post> {
+        let resp = self.get(&format!("/comments/{id}?limit=0"))?;
         let data = &resp[0]["data"]["children"][0]["data"];
         parse_post(data).context("Failed to parse post")
     }
 
-    pub async fn comments(&self, id: &str, limit: u32) -> Result<Vec<Comment>> {
-        let resp = self
-            .get(&format!("/comments/{id}?limit={limit}&depth=10"))
-            .await?;
+    pub fn comments(&self, id: &str, limit: u32) -> Result<Vec<Comment>> {
+        let resp = self.get(&format!("/comments/{id}?limit={limit}&depth=10"))?;
 
         let comments = resp[1]["data"]["children"]
             .as_array()
@@ -165,8 +124,8 @@ impl RedditClient {
             .collect())
     }
 
-    pub async fn subscriptions(&self) -> Result<Vec<String>> {
-        let resp = self.get("/subreddits/mine/subscriber?limit=100").await?;
+    pub fn subscriptions(&self) -> Result<Vec<String>> {
+        let resp = self.get("/subreddits/mine/subscriber?limit=100")?;
         let subs = resp["data"]["children"]
             .as_array()
             .context("Invalid response")?;
@@ -179,8 +138,8 @@ impl RedditClient {
         Ok(names)
     }
 
-    pub async fn subreddit_info(&self, name: &str) -> Result<Subreddit> {
-        let resp = self.get(&format!("/r/{name}/about")).await?;
+    pub fn subreddit_info(&self, name: &str) -> Result<Subreddit> {
+        let resp = self.get(&format!("/r/{name}/about"))?;
         let data = &resp["data"];
         Ok(Subreddit {
             name: data["display_name"].as_str().unwrap_or(name).to_string(),
@@ -194,7 +153,7 @@ impl RedditClient {
         })
     }
 
-    pub async fn search(
+    pub fn search(
         &self,
         query: &str,
         subreddit: Option<&str>,
@@ -206,31 +165,30 @@ impl RedditClient {
             None => "/search?".to_string(),
         };
         let endpoint = format!("{base}&q={}&sort={sort}&limit={limit}", urlencoded(query));
-        let resp = self.get(&endpoint).await?;
+        let resp = self.get(&endpoint)?;
         parse_posts(&resp)
     }
 
-    pub async fn vote(&self, fullname: &str, direction: i8) -> Result<()> {
+    pub fn vote(&self, fullname: &str, direction: i8) -> Result<()> {
         self.post_form(
             "/api/vote",
             &[("id", fullname), ("dir", &direction.to_string())],
-        )
-        .await?;
+        )?;
         Ok(())
     }
 
-    pub async fn save(&self, fullname: &str) -> Result<()> {
-        self.post_form("/api/save", &[("id", fullname)]).await?;
+    pub fn save(&self, fullname: &str) -> Result<()> {
+        self.post_form("/api/save", &[("id", fullname)])?;
         Ok(())
     }
 
-    pub async fn unsave(&self, fullname: &str) -> Result<()> {
-        self.post_form("/api/unsave", &[("id", fullname)]).await?;
+    pub fn unsave(&self, fullname: &str) -> Result<()> {
+        self.post_form("/api/unsave", &[("id", fullname)])?;
         Ok(())
     }
 
-    pub async fn inbox(&self, limit: u32) -> Result<Vec<InboxItem>> {
-        let resp = self.get(&format!("/message/inbox?limit={limit}")).await?;
+    pub fn inbox(&self, limit: u32) -> Result<Vec<InboxItem>> {
+        let resp = self.get(&format!("/message/inbox?limit={limit}"))?;
         let items = resp["data"]["children"]
             .as_array()
             .context("Invalid inbox response")?;
@@ -241,11 +199,11 @@ impl RedditClient {
             .collect())
     }
 
-    pub async fn saved_posts(&self, limit: u32) -> Result<Vec<Post>> {
-        let config = crate::config::load_config()?;
-        let resp = self
-            .get(&format!("/user/{}/saved?limit={limit}", config.username))
-            .await?;
+    pub fn saved_posts(&self, limit: u32) -> Result<Vec<Post>> {
+        let resp = self.get(&format!(
+            "/user/{}/saved?limit={limit}",
+            self.session.username
+        ))?;
         let children = resp["data"]["children"]
             .as_array()
             .context("Invalid saved response")?;
@@ -257,8 +215,8 @@ impl RedditClient {
             .collect())
     }
 
-    pub async fn user_info(&self, username: &str) -> Result<UserInfo> {
-        let resp = self.get(&format!("/user/{username}/about")).await?;
+    pub fn user_info(&self, username: &str) -> Result<UserInfo> {
+        let resp = self.get(&format!("/user/{username}/about"))?;
         let data = &resp["data"];
         Ok(UserInfo {
             name: data["name"].as_str().unwrap_or(username).to_string(),
@@ -269,26 +227,23 @@ impl RedditClient {
         })
     }
 
-    pub async fn user_posts(&self, username: &str, limit: u32) -> Result<Vec<Post>> {
-        let resp = self
-            .get(&format!(
-                "/user/{username}/submitted?limit={limit}&sort=new"
-            ))
-            .await?;
+    pub fn user_posts(&self, username: &str, limit: u32) -> Result<Vec<Post>> {
+        let resp = self.get(&format!(
+            "/user/{username}/submitted?limit={limit}&sort=new"
+        ))?;
         parse_posts(&resp)
     }
 
-    pub async fn mark_read(&self) -> Result<()> {
-        self.post_form("/api/read_all_messages", &[]).await?;
+    pub fn mark_read(&self) -> Result<()> {
+        self.post_form("/api/read_all_messages", &[])?;
         Ok(())
     }
 
-    pub async fn reply(&self, parent_fullname: &str, text: &str) -> Result<()> {
+    pub fn reply(&self, parent_fullname: &str, text: &str) -> Result<()> {
         self.post_form(
             "/api/comment",
             &[("thing_id", parent_fullname), ("text", text)],
-        )
-        .await?;
+        )?;
         Ok(())
     }
 }

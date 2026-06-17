@@ -1,6 +1,5 @@
-mod auth;
+mod browser;
 mod client;
-mod config;
 mod display;
 
 use anyhow::Result;
@@ -16,18 +15,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Configure Reddit API credentials
-    Config {
-        #[arg(long)]
-        client_id: String,
-        #[arg(long)]
-        client_secret: String,
-        #[arg(long)]
-        username: String,
-        #[arg(long)]
-        password: String,
-    },
-    /// Re-authenticate and cache refresh token
+    /// Open reddit's login page in the browser (auth is via the browser session)
     Login,
     /// Browse feed (home or subreddit)
     Feed {
@@ -175,142 +163,153 @@ enum VoteDirection {
     None,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Config {
-            client_id,
-            client_secret,
-            username,
-            password,
-        } => {
-            config::save_config(&config::Config {
-                client_id,
-                client_secret,
-                username,
-                password,
-            })?;
-            eprintln!("Configuration saved to {:?}", config::config_dir());
-        }
         Commands::Login => {
-            let cfg = config::load_config()?;
-            let http = reqwest::Client::new();
-            let (_, refresh) = auth::password_auth(&http, &cfg).await?;
-            config::save_token_cache(&config::TokenCache {
-                refresh_token: Some(refresh),
-            });
-            eprintln!("Login successful. Refresh token saved.");
+            browser::ensure_reddit_tab()?;
+            std::process::Command::new("browser-cli")
+                .args(["open", "https://www.reddit.com/login/"])
+                .status()
+                .ok();
+            eprintln!(
+                "Opened reddit's login page in the browser. Log in, then re-run your command."
+            );
         }
         cmd => {
-            let reddit = client::RedditClient::new().await?;
-            run_command(&reddit, cmd).await?;
+            let reddit = client::RedditClient::new()?;
+            run_command(&reddit, cmd)?;
         }
     }
 
     Ok(())
 }
 
-async fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
+fn run_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
+    match cmd {
+        cmd @ (Commands::Feed { .. }
+        | Commands::Post { .. }
+        | Commands::Comments { .. }
+        | Commands::Subs
+        | Commands::Sub { .. }
+        | Commands::Search { .. }) => run_read_command(reddit, cmd)?,
+        cmd @ (Commands::Vote { .. }
+        | Commands::Save { .. }
+        | Commands::Unsave { .. }
+        | Commands::Saved { .. }
+        | Commands::Inbox { .. }
+        | Commands::ReadAll
+        | Commands::User { .. }
+        | Commands::Reply { .. }) => run_action_command(reddit, cmd)?,
+        Commands::Login => unreachable!(),
+    }
+    Ok(())
+}
+
+fn run_read_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
     match cmd {
         Commands::Feed {
             sort,
             limit,
             subreddit,
             after,
-        } => show_feed(reddit, sort, limit, subreddit, after).await?,
-        Commands::Post { id } => fetch_post(reddit, &id).await?,
-        Commands::Comments { id, limit } => fetch_comments(reddit, &id, limit).await?,
-        Commands::Subs => show_subscriptions(reddit).await?,
-        Commands::Sub { name } => show_subreddit(reddit, &name).await?,
+        } => show_feed(reddit, sort, limit, subreddit, after)?,
+        Commands::Post { id } => fetch_post(reddit, &id)?,
+        Commands::Comments { id, limit } => fetch_comments(reddit, &id, limit)?,
+        Commands::Subs => show_subscriptions(reddit)?,
+        Commands::Sub { name } => show_subreddit(reddit, &name)?,
         Commands::Search {
             query,
             subreddit,
             sort,
             limit,
-        } => search_posts(reddit, &query, subreddit, sort, limit).await?,
-        Commands::Vote { id, direction } => vote_on_thing(reddit, id, direction).await?,
-        Commands::Save { id } => save_post(reddit, &id).await?,
-        Commands::Unsave { id } => unsave_post(reddit, &id).await?,
-        Commands::Saved { limit } => show_saved(reddit, limit).await?,
-        Commands::Inbox { limit } => show_inbox(reddit, limit).await?,
-        Commands::ReadAll => mark_all_read(reddit).await?,
-        Commands::User { name, limit } => show_user(reddit, &name, limit).await?,
-        Commands::Reply { id, text } => post_reply(reddit, &id, &text).await?,
-        Commands::Config { .. } | Commands::Login => unreachable!(),
+        } => search_posts(reddit, &query, subreddit, sort, limit)?,
+        _ => unreachable!(),
     }
     Ok(())
 }
 
-async fn fetch_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
-    display::format_post_detail(&reddit.post(id).await?);
+fn run_action_command(reddit: &client::RedditClient, cmd: Commands) -> Result<()> {
+    match cmd {
+        Commands::Vote { id, direction } => vote_on_thing(reddit, id, direction)?,
+        Commands::Save { id } => save_post(reddit, &id)?,
+        Commands::Unsave { id } => unsave_post(reddit, &id)?,
+        Commands::Saved { limit } => show_saved(reddit, limit)?,
+        Commands::Inbox { limit } => show_inbox(reddit, limit)?,
+        Commands::ReadAll => mark_all_read(reddit)?,
+        Commands::User { name, limit } => show_user(reddit, &name, limit)?,
+        Commands::Reply { id, text } => post_reply(reddit, &id, &text)?,
+        _ => unreachable!(),
+    }
     Ok(())
 }
 
-async fn fetch_comments(reddit: &client::RedditClient, id: &str, limit: u32) -> Result<()> {
-    display::format_comments(&reddit.comments(id, limit).await?);
+fn fetch_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    display::format_post_detail(&reddit.post(id)?);
     Ok(())
 }
 
-async fn show_subreddit(reddit: &client::RedditClient, name: &str) -> Result<()> {
-    display::format_subreddit_info(&reddit.subreddit_info(name).await?);
+fn fetch_comments(reddit: &client::RedditClient, id: &str, limit: u32) -> Result<()> {
+    display::format_comments(&reddit.comments(id, limit)?);
     Ok(())
 }
 
-async fn search_posts(
+fn show_subreddit(reddit: &client::RedditClient, name: &str) -> Result<()> {
+    display::format_subreddit_info(&reddit.subreddit_info(name)?);
+    Ok(())
+}
+
+fn search_posts(
     reddit: &client::RedditClient,
     query: &str,
     subreddit: Option<String>,
     sort: SearchSort,
     limit: u32,
 ) -> Result<()> {
-    let posts = reddit
-        .search(query, subreddit.as_deref(), sort.as_str(), limit)
-        .await?;
+    let posts = reddit.search(query, subreddit.as_deref(), sort.as_str(), limit)?;
     display::format_post_list(&posts, 0);
     Ok(())
 }
 
-async fn save_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
-    reddit.save(&to_fullname(id, "t3")).await?;
+fn save_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    reddit.save(&to_fullname(id, "t3"))?;
     eprintln!("Saved.");
     Ok(())
 }
 
-async fn unsave_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
-    reddit.unsave(&to_fullname(id, "t3")).await?;
+fn unsave_post(reddit: &client::RedditClient, id: &str) -> Result<()> {
+    reddit.unsave(&to_fullname(id, "t3"))?;
     eprintln!("Unsaved.");
     Ok(())
 }
 
-async fn show_saved(reddit: &client::RedditClient, limit: u32) -> Result<()> {
-    display::format_post_list(&reddit.saved_posts(limit).await?, 0);
+fn show_saved(reddit: &client::RedditClient, limit: u32) -> Result<()> {
+    display::format_post_list(&reddit.saved_posts(limit)?, 0);
     Ok(())
 }
 
-async fn mark_all_read(reddit: &client::RedditClient) -> Result<()> {
-    reddit.mark_read().await?;
+fn mark_all_read(reddit: &client::RedditClient) -> Result<()> {
+    reddit.mark_read()?;
     eprintln!("All messages marked as read.");
     Ok(())
 }
 
-async fn post_reply(reddit: &client::RedditClient, id: &str, text: &str) -> Result<()> {
-    reddit.reply(&to_fullname(id, "t3"), text).await?;
+fn post_reply(reddit: &client::RedditClient, id: &str, text: &str) -> Result<()> {
+    reddit.reply(&to_fullname(id, "t3"), text)?;
     eprintln!("Reply posted.");
     Ok(())
 }
 
-async fn show_feed(
+fn show_feed(
     reddit: &client::RedditClient,
     sort: SortMode,
     limit: u32,
     subreddit: Option<String>,
     after: Option<String>,
 ) -> Result<()> {
-    let (posts, next) = reddit
-        .feed(sort.as_str(), limit, after.as_deref(), subreddit.as_deref())
-        .await?;
+    let (posts, next) =
+        reddit.feed(sort.as_str(), limit, after.as_deref(), subreddit.as_deref())?;
     display::format_post_list(&posts, 0);
     if let Some(cursor) = next {
         eprintln!("Next page: --after {cursor}");
@@ -318,8 +317,8 @@ async fn show_feed(
     Ok(())
 }
 
-async fn show_subscriptions(reddit: &client::RedditClient) -> Result<()> {
-    let subs = reddit.subscriptions().await?;
+fn show_subscriptions(reddit: &client::RedditClient) -> Result<()> {
+    let subs = reddit.subscriptions()?;
     for name in &subs {
         println!("r/{name}");
     }
@@ -327,7 +326,7 @@ async fn show_subscriptions(reddit: &client::RedditClient) -> Result<()> {
     Ok(())
 }
 
-async fn vote_on_thing(
+fn vote_on_thing(
     reddit: &client::RedditClient,
     id: String,
     direction: VoteDirection,
@@ -337,13 +336,13 @@ async fn vote_on_thing(
         VoteDirection::Down => -1,
         VoteDirection::None => 0,
     };
-    reddit.vote(&to_fullname(&id, "t3"), dir).await?;
+    reddit.vote(&to_fullname(&id, "t3"), dir)?;
     eprintln!("Voted.");
     Ok(())
 }
 
-async fn show_inbox(reddit: &client::RedditClient, limit: u32) -> Result<()> {
-    let items = reddit.inbox(limit).await?;
+fn show_inbox(reddit: &client::RedditClient, limit: u32) -> Result<()> {
+    let items = reddit.inbox(limit)?;
     display::format_inbox(&items);
     let new_count = items.iter().filter(|i| i.is_new).count();
     if new_count > 0 {
@@ -352,11 +351,11 @@ async fn show_inbox(reddit: &client::RedditClient, limit: u32) -> Result<()> {
     Ok(())
 }
 
-async fn show_user(reddit: &client::RedditClient, name: &str, limit: u32) -> Result<()> {
-    let info = reddit.user_info(name).await?;
+fn show_user(reddit: &client::RedditClient, name: &str, limit: u32) -> Result<()> {
+    let info = reddit.user_info(name)?;
     display::format_user_info(&info);
     println!();
-    let posts = reddit.user_posts(name, limit).await?;
+    let posts = reddit.user_posts(name, limit)?;
     if !posts.is_empty() {
         println!("Recent posts:");
         display::format_post_list(&posts, 0);
