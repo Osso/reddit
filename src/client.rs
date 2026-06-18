@@ -17,7 +17,6 @@ pub struct Post {
     pub selftext: String,
     pub url: String,
     pub permalink: String,
-    pub created_utc: f64,
     pub is_self: bool,
     pub link_flair_text: Option<String>,
     pub over_18: bool,
@@ -27,12 +26,9 @@ pub struct Post {
 
 #[derive(Debug, Clone)]
 pub struct Comment {
-    pub id: String,
     pub author: String,
     pub body: String,
     pub score: i64,
-    pub depth: u32,
-    pub created_utc: f64,
     pub replies: Vec<Comment>,
 }
 
@@ -47,12 +43,10 @@ pub struct Subreddit {
 
 #[derive(Debug, Clone)]
 pub struct InboxItem {
-    pub id: String,
     pub author: String,
     pub subject: String,
     pub body: String,
     pub subreddit: Option<String>,
-    pub context: Option<String>,
     pub is_new: bool,
     pub item_type: String,
 }
@@ -259,7 +253,6 @@ fn parse_post(data: &serde_json::Value) -> Option<Post> {
         selftext: data["selftext"].as_str().unwrap_or("").to_string(),
         url: data["url"].as_str().unwrap_or("").to_string(),
         permalink: data["permalink"].as_str().unwrap_or("").to_string(),
-        created_utc: data["created_utc"].as_f64().unwrap_or(0.0),
         is_self: data["is_self"].as_bool().unwrap_or(false),
         link_flair_text: data["link_flair_text"].as_str().map(|s| s.to_string()),
         over_18: data["over_18"].as_bool().unwrap_or(false),
@@ -290,24 +283,20 @@ fn parse_comment(data: &serde_json::Value) -> Option<Comment> {
         .unwrap_or_default();
 
     Some(Comment {
-        id: data["id"].as_str()?.to_string(),
         author: data["author"].as_str()?.to_string(),
         body: data["body"].as_str()?.to_string(),
         score: data["score"].as_i64()?,
-        depth: data["depth"].as_u64().unwrap_or(0) as u32,
-        created_utc: data["created_utc"].as_f64().unwrap_or(0.0),
         replies,
     })
 }
 
 fn parse_inbox_item(data: &serde_json::Value) -> Option<InboxItem> {
+    data["name"].as_str()?; // skip malformed items lacking a fullname
     Some(InboxItem {
-        id: data["name"].as_str()?.to_string(),
         author: data["author"].as_str().unwrap_or("[deleted]").to_string(),
         subject: data["subject"].as_str().unwrap_or("").to_string(),
         body: data["body"].as_str().unwrap_or("").to_string(),
         subreddit: data["subreddit"].as_str().map(|s| s.to_string()),
-        context: data["context"].as_str().map(|s| s.to_string()),
         is_new: data["new"].as_bool().unwrap_or(false),
         item_type: data["type"].as_str().unwrap_or("unknown").to_string(),
     })
